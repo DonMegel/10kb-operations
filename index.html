@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10,000 Bones Operations</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; margin: 0; color: #2c2c2a; background: #fdfcfa; }
+  header { padding: 12px 18px; border-bottom: 1px solid #e2e0d8; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  .conn { font-size: 12.5px; color: #5f5e5a; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #bbb; margin-right: 5px; vertical-align: middle; }
+  .dot.ok { background: #1aa34a; } .dot.bad { background: #c0392b; }
+  .setup { padding: 16px 18px; background: #f1efe8; border-bottom: 1px solid #e2e0d8; }
+  .setup.hidden { display: none; }
+  .setup .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  label { font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px; }
+  input { padding: 8px 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; font-family: Consolas, monospace; }
+  input.url { width: 320px; } input.key { width: 320px; } input.gid { width: 80px; }
+  button { font-size: 13px; padding: 9px 16px; border-radius: 6px; border: 1px solid #157a5a; background: #1D9E75; color: #fff; cursor: pointer; }
+  button:hover { background: #178a64; }
+  button.sec { background: #fff; color: #2c2c2a; border: 1px solid #bbb; }
+  button.sec:hover { background: #f3f3f3; }
+  .main { display: flex; gap: 16px; padding: 14px 18px; align-items: flex-start; flex-wrap: wrap; }
+  #board { background: #eaf0e4; border: 1px solid #d8e2cf; border-radius: 10px; padding: 6px; overflow: auto; max-width: 100%; flex: 1; min-width: 320px; }
+  svg { display: block; }
+  .hex { stroke: rgba(0,0,0,0.2); stroke-width: 1; cursor: pointer; }
+  .hex:hover { stroke: #ffc800; stroke-width: 2.5; }
+  .hex.sel { stroke: #ffc800; stroke-width: 4; }
+  .hex.path { stroke: #ffc800; stroke-width: 4; }
+  .hex.legal { stroke: #1aa34a; stroke-width: 3.5; }
+  .road { stroke: #6b4a26; stroke-width: 3.5; stroke-linecap: round; pointer-events: none; }
+  .edge-river { stroke: #2f6fb0; stroke-width: 5; pointer-events: none; stroke-linecap: round; }
+  .edge-stream { stroke: #79b3e0; stroke-width: 3; stroke-dasharray: 4 3; pointer-events: none; stroke-linecap: round; }
+  .edge-bridge { stroke: #6b4a26; stroke-width: 6; pointer-events: none; }
+  .edge-ford { stroke: #c9a24a; stroke-width: 4; stroke-dasharray: 2 3; pointer-events: none; stroke-linecap: round; }
+  .settle { pointer-events: none; }
+  .settle-label { font-size: 8px; fill: #fff; text-anchor: middle; pointer-events: none; font-weight: 700; }
+  .sidebar { width: 260px; flex-shrink: 0; }
+  .card { background: #f1efe8; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; line-height: 1.5; }
+  .card b { font-weight: 600; }
+  .status { font-size: 13px; padding: 10px 14px; margin: 0 18px 14px; border-radius: 6px; }
+  .status.ok { background: #d6efdc; color: #176b34; }
+  .status.bad { background: #f8d7da; color: #842029; }
+  .status.info { background: #eef3f8; color: #355; }
+  .muted { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>10,000 Bones Operations <span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">v0.2.0</span></h1>
+  <span class="conn"><span class="dot" id="connDot"></span><span id="connText">not connected</span></span>
+  <span class="conn" id="whoami" style="display:none"></span>
+  <button class="sec" id="logoutBtn" style="display:none">Log out</button>
+  <button class="sec" id="editConn" style="margin-left:auto">Connection settings</button>
+</header>
+
+<div class="setup" id="setup">
+  <div class="row">
+    <div><label>Supabase Project URL</label><input class="url" id="url" placeholder="https://xxxx.supabase.co"></div>
+    <div><label>anon public key</label><input class="key" id="key" placeholder="eyJhbG..."></div>
+    <div><label>Game ID</label><input class="gid" id="gid" value="1"></div>
+    <button id="connectBtn">Connect</button>
+  </div>
+  <div class="muted" style="margin-top:8px">Uses the same Project URL and anon key from your verification test. Values stay in this page only.</div>
+</div>
+
+<div class="setup" id="authPanel" style="display:none">
+  <div class="row">
+    <div><label>Email</label><input id="email" type="email" placeholder="you@example.com" style="width:240px;font-family:inherit"></div>
+    <div><label>Password</label><input id="password" type="password" placeholder="at least 6 characters" style="width:200px;font-family:inherit"></div>
+    <button id="loginBtn">Log in</button>
+    <button class="sec" id="signupBtn">Sign up</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div><label>Display name (when joining a game)</label><input id="displayName" placeholder="e.g. Commander Vance" style="width:240px;font-family:inherit"></div>
+    <div><label>Side color</label><input id="sideColor" type="color" value="#1D6FB8" style="width:54px;padding:2px;height:36px"></div>
+    <button class="sec" id="joinBtn">Join / resume this game</button>
+  </div>
+  <div class="muted" id="authMsg" style="margin-top:8px"></div>
+</div>
+
+<div class="status info" id="status">Enter your connection details above and click Connect.</div>
+
+<div class="main" id="mainArea" style="display:none">
+  <div id="board"><svg id="grid"></svg></div>
+  <div class="sidebar">
+    <div class="card" id="info"><b>Click a hex or unit</b><br>Details show here.</div>
+    <div class="card" id="planCard" style="display:none">
+      <b>Movement order</b>
+      <div id="planUnit" style="margin:6px 0;font-size:12.5px"></div>
+      <div style="font-size:13px;margin:6px 0">Points left: <b id="mpLeft">—</b></div>
+      <div id="planPath" style="font-size:12.5px;color:#5f5e5a;line-height:1.6">No path yet.</div>
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+        <button class="sec" id="undoStep" style="flex:1">Undo step</button>
+        <button class="sec" id="clearPath" style="flex:1">Clear</button>
+      </div>
+      <button id="saveOrder" style="width:100%;margin-top:6px">Save move order</button>
+      <button class="sec" id="cancelPlan" style="width:100%;margin-top:6px">Deselect unit</button>
+    </div>
+    <div class="card">
+      <b>Map legend</b><br>
+      <span class="muted">Terrain colors match the editor. Brown lines = roads, blue = rivers/streams, squares = settlements (V/T/C).</span>
+    </div>
+    <div class="card" id="counts"></div>
+    <button class="sec" id="reloadBtn" style="width:100%">Reload map from database</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// Resolve the Supabase global regardless of how the CDN exposes it.
+function getSupabaseLib(){
+  if (window.supabase && window.supabase.createClient) return window.supabase;
+  if (window.Supabase && window.Supabase.createClient) return window.Supabase;
+  return null;
+}
+var SIZE = 24;
+var TERR = {
+  plains:    { name:'Plains',    color:'#9ec96a' },
+  forest:    { name:'Forest',    color:'#4a8a44' },
+  hills:     { name:'Hills',     color:'#b39a64' },
+  mountains: { name:'Mountains', color:'#8f8f94' },
+  rough:     { name:'Rough',     color:'#c2b083' },
+  swamp:     { name:'Swamp',     color:'#6f8f6a' },
+  sand:      { name:'Sand',      color:'#e3d18a' },
+  water:     { name:'Water',     color:'#5a8fb0' }
+};
+var SETTLE_ABBR = { village:'V', town:'T', city:'C' };
+var TERR_MOVE = { plains:1, forest:2, hills:2, mountains:3, rough:2, swamp:3, sand:2, water:99 };
+var NEIGHBORS=[[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+
+// planning state
+var planUnit = null;        // the selected force
+var planPath = [];          // array of {q,r} starting at the unit's hex
+var planType = null;        // the unit's type info (movement, etc.)
+
+var supa = null, tiles = [], edges = [], forces = [], myOrders = [], byKey = {}, selected = null;
+var currentUser = null, currentPlayer = null;
+
+function setStatus(msg, kind){
+  var s=document.getElementById('status');
+  s.className='status '+(kind||'info'); s.textContent=msg; s.style.display='block';
+}
+function setConn(ok, text){
+  var d=document.getElementById('connDot');
+  d.className='dot '+(ok?'ok':'bad');
+  document.getElementById('connText').textContent=text;
+}
+
+document.getElementById('editConn').addEventListener('click',function(){
+  document.getElementById('setup').classList.toggle('hidden');
+});
+
+document.getElementById('connectBtn').addEventListener('click', connect);
+document.getElementById('reloadBtn').addEventListener('click', loadMap);
+document.getElementById('undoStep').addEventListener('click', function(){ if(planPath.length>1){ planPath.pop(); renderPlan(); render(); } });
+document.getElementById('clearPath').addEventListener('click', function(){ if(planUnit){ planPath=[{q:planUnit.q,r:planUnit.r}]; renderPlan(); render(); } });
+document.getElementById('cancelPlan').addEventListener('click', function(){ endPlanning(); render(); });
+document.getElementById('saveOrder').addEventListener('click', saveOrder);
+document.getElementById('loginBtn').addEventListener('click', function(){ doAuth('login'); });
+document.getElementById('signupBtn').addEventListener('click', function(){ doAuth('signup'); });
+document.getElementById('joinBtn').addEventListener('click', joinGame);
+document.getElementById('logoutBtn').addEventListener('click', logout);
+
+function authMsg(m){ document.getElementById('authMsg').textContent = m||''; }
+
+async function connect(){
+  var url=document.getElementById('url').value.trim().replace(/\/+$/,'');
+  var key=document.getElementById('key').value.trim();
+  if(!url||!key){ setStatus('Enter both the Project URL and anon key.','bad'); return; }
+  var lib = getSupabaseLib();
+  if(!lib){
+    setConn(false,'library not loaded');
+    setStatus('The Supabase library did not load in this environment. Try downloading this page as an .html file and opening it from your downloads folder.','bad');
+    return;
+  }
+  try{
+    supa = lib.createClient(url, key, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        storage: window.localStorage
+      }
+    });
+    setConn(true,'connected');
+    document.getElementById('setup').classList.add('hidden');
+    // check for an existing session (already logged in from before)
+    var sess = await supa.auth.getSession();
+    if(sess.data && sess.data.session){
+      currentUser = sess.data.session.user;
+      onLoggedIn();
+    } else {
+      document.getElementById('authPanel').style.display='block';
+      setStatus('Connected. Please log in or sign up to play.','info');
+    }
+  }catch(e){
+    setConn(false,'connection failed');
+    setStatus('Could not create client: '+e.message,'bad');
+  }
+}
+
+async function doAuth(kind){
+  if(!supa){ authMsg('Connect first.'); return; }
+  var email=document.getElementById('email').value.trim();
+  var pw=document.getElementById('password').value;
+  if(!email||!pw){ authMsg('Enter email and password.'); return; }
+  authMsg(kind==='signup'?'Creating account…':'Logging in…');
+  try{
+    var res = kind==='signup'
+      ? await supa.auth.signUp({ email: email, password: pw })
+      : await supa.auth.signInWithPassword({ email: email, password: pw });
+    if(res.error) throw res.error;
+    if(kind==='signup' && (!res.data.session)){
+      authMsg('Account created. If email confirmation is on, check your inbox, then log in. Otherwise just click Log in.');
+      return;
+    }
+    currentUser = res.data.user || (res.data.session && res.data.session.user);
+    authMsg('');
+    onLoggedIn();
+  }catch(e){
+    authMsg('Auth failed: '+(e.message||e));
+  }
+}
+
+async function onLoggedIn(){
+  document.getElementById('whoami').style.display='';
+  document.getElementById('whoami').textContent = '· '+currentUser.email;
+  document.getElementById('logoutBtn').style.display='';
+  // look for an existing player row for this user in this game
+  var gid=+document.getElementById('gid').value||1;
+  var pr = await supa.from('players').select('*').eq('game_id',gid).eq('user_id',currentUser.id).maybeSingle();
+  if(pr.data){
+    currentPlayer = pr.data;
+    document.getElementById('authPanel').style.display='none';
+    setStatus('Logged in as '+currentPlayer.display_name+'. Loading map…','info');
+    await loadMap();
+  } else {
+    document.getElementById('authPanel').style.display='block';
+    setStatus('Logged in. You are not yet a player in game '+gid+' — set a display name and click Join.','info');
+  }
+}
+
+async function joinGame(){
+  if(!currentUser){ authMsg('Log in first.'); return; }
+  var gid=+document.getElementById('gid').value||1;
+  var name=document.getElementById('displayName').value.trim()||currentUser.email.split('@')[0];
+  var color=document.getElementById('sideColor').value;
+  authMsg('Joining game '+gid+'…');
+  // diagnostic: confirm the client has an authenticated session right now
+  var who = await supa.auth.getUser();
+  if(who.error || !who.data || !who.data.user){
+    authMsg('Not authenticated at insert time — the session was lost. Try logging in again. ('+(who.error?who.error.message:'no user')+')');
+    return;
+  }
+  var uid = who.data.user.id;
+  // confirm the access token exists — this is what authorizes the DB request
+  var sess = await supa.auth.getSession();
+  var hasToken = sess.data && sess.data.session && sess.data.session.access_token;
+  if(!hasToken){
+    authMsg('Logged in, but no access token is attached to requests — the database sees you as anonymous. This is common when running from a file:// path. Try serving the page over http (see notes), or log out and back in.');
+    return;
+  }
+  try{
+    var ins = await supa.from('players').insert({
+      game_id: gid, user_id: uid, display_name: name, color_hex: color, turn_order: 1, points_budget: 100
+    }).select().single();
+    if(ins.error) throw ins.error;
+    currentPlayer = ins.data;
+    authMsg('');
+    document.getElementById('authPanel').style.display='none';
+    setStatus('Joined as '+name+'. Loading map…','info');
+    await loadMap();
+  }catch(e){
+    authMsg('Join failed: '+(e.message||e)+'  [your uid: '+uid+']');
+  }
+}
+
+async function logout(){
+  if(supa) await supa.auth.signOut();
+  currentUser=null; currentPlayer=null;
+  document.getElementById('whoami').style.display='none';
+  document.getElementById('logoutBtn').style.display='none';
+  document.getElementById('mainArea').style.display='none';
+  document.getElementById('authPanel').style.display='block';
+  setStatus('Logged out.','info');
+}
+
+async function loadMap(){
+  if(!supa){ setStatus('Not connected yet.','bad'); return; }
+  var gid=+document.getElementById('gid').value||1;
+  setStatus('Loading map for game '+gid+'…','info');
+  try{
+    var tRes = await supa.from('tiles').select('*').eq('game_id', gid);
+    if(tRes.error) throw tRes.error;
+    var eRes = await supa.from('edges').select('*').eq('game_id', gid);
+    if(eRes.error) throw eRes.error;
+    // forces joined to their unit type for display (name, color come via player)
+    var fRes = await supa.from('forces')
+      .select('*, unit_types(name, movement, attack, defense, attack_range, sight_range, is_armored, stack_cost, restricted_terrain), players(color_hex, display_name)')
+      .eq('game_id', gid);
+    // forces may be empty or blocked by RLS — that's fine, just show none
+    forces = (fRes.error ? [] : (fRes.data || []));
+    tiles = tRes.data || [];
+    edges = eRes.data || [];
+    if(tiles.length===0){
+      setStatus('Connected, but no tiles found for game '+gid+'. Check the Game ID, or that your map loaded into the database.','bad');
+      document.getElementById('mainArea').style.display='none';
+      return;
+    }
+    byKey={}; tiles.forEach(function(t){ byKey[t.q+','+t.r]=t; });
+    document.getElementById('mainArea').style.display='flex';
+    render();
+    setStatus('Map loaded: '+tiles.length+' tiles, '+edges.length+' edge features, '+forces.length+' units.','ok');
+  }catch(e){
+    setStatus('Load failed: '+(e.message||e)+'. (If this mentions permission/RLS, check that you are a player in this game, or that the read policy allows it.)','bad');
+  }
+}
+
+function hexPos(q,r){return{x:SIZE*Math.sqrt(3)*(q+r/2),y:SIZE*1.5*r};}
+function corner(cx,cy,i){var a=Math.PI/180*(60*i-30);return{x:cx+SIZE*Math.cos(a),y:cy+SIZE*Math.sin(a)};}
+function sharedCorners(a,b,ox,oy){
+  var pa=hexPos(a.q,a.r),pb=hexPos(b.q,b.r),ca=[],cb=[];
+  for(var i=0;i<6;i++){ca.push(corner(ox(pa),oy(pa),i));cb.push(corner(ox(pb),oy(pb),i));}
+  var sh=[];
+  ca.forEach(function(p1){cb.forEach(function(p2){if(Math.abs(p1.x-p2.x)<1.5&&Math.abs(p1.y-p2.y)<1.5)sh.push(p1);});});
+  return sh.length===2?sh:null;
+}
+
+function render(){
+  var svg=document.getElementById('grid');
+  while(svg.firstChild)svg.removeChild(svg.firstChild);
+  var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  tiles.forEach(function(t){var p=hexPos(t.q,t.r);minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);});
+  var pad=SIZE+4,W=(maxX-minX)+pad*2,H=(maxY-minY)+pad*2;
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  function ox(p){return p.x-minX+pad;} function oy(p){return p.y-minY+pad;}
+
+  // draw saved-order destination shading (faint) so ordered routes are visible at rest
+  if(!planUnit){
+    myOrders.forEach(function(o){
+      if(!o.path) return;
+      o.path.split(',').forEach(function(step,idx){
+        if(idx===0) return; // skip the unit's own hex
+        var qr=step.split(':'); var t=byKey[qr[0]+','+qr[1]]; if(!t) return;
+        var p=hexPos(t.q,t.r);var cx=ox(p),cy=oy(p);
+        var pts=[];for(var i=0;i<6;i++){var cn=corner(cx,cy,i);pts.push(cn.x.toFixed(1)+','+cn.y.toFixed(1));}
+        var sh=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+        sh.setAttribute('points',pts.join(' '));
+        sh.setAttribute('fill','rgba(255,200,0,0.22)');
+        sh.setAttribute('pointer-events','none');
+        svg.appendChild(sh);
+      });
+    });
+  }
+
+  // hexes
+  tiles.forEach(function(t){
+    var p=hexPos(t.q,t.r);var cx=ox(p),cy=oy(p);
+    var pts=[];for(var i=0;i<6;i++){var cn=corner(cx,cy,i);pts.push(cn.x.toFixed(1)+','+cn.y.toFixed(1));}
+    var poly=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    poly.setAttribute('points',pts.join(' '));
+    poly.setAttribute('fill',(TERR[t.terrain]||TERR.plains).color);
+    var hexCls='hex'+(selected&&selected.q===t.q&&selected.r===t.r?' sel':'');
+    poly.setAttribute('class',hexCls);
+    poly.setAttribute('data-key',t.q+','+t.r);
+    poly.addEventListener('click',function(){
+      if(planUnit){ tryExtendPath(t); }
+      else { selected=t; render(); showInfo(t); }
+    });
+    svg.appendChild(poly);
+    // planning shade overlay (drawn on top of the terrain, semi-transparent)
+    if(planUnit){
+      var onPath = planPath.some(function(p){return p.q===t.q&&p.r===t.r;});
+      var last = planPath[planPath.length-1];
+      var legal = last && isAdjacent(last,t) && !onPath &&
+                  (TERR_MOVE[t.terrain]||1)<99 &&
+                  (pathCost()+(TERR_MOVE[t.terrain]||1)) <= (planType.movement||0);
+      if(onPath || legal){
+        var shade=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+        shade.setAttribute('points',pts.join(' '));
+        shade.setAttribute('fill', onPath ? 'rgba(255,200,0,0.5)' : 'rgba(26,163,74,0.35)');
+        shade.setAttribute('pointer-events','none');
+        svg.appendChild(shade);
+      }
+    }
+  });
+  // roads
+  tiles.forEach(function(t){
+    if(!t.has_road)return;
+    var p=hexPos(t.q,t.r);var cx=ox(p),cy=oy(p);
+    NEIGHBORS.forEach(function(o){
+      var nb=byKey[(t.q+o[0])+','+(t.r+o[1])];
+      if(nb&&nb.has_road&&(nb.q>t.q||(nb.q===t.q&&nb.r>t.r))){
+        var np=hexPos(nb.q,nb.r);
+        var ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+        ln.setAttribute('x1',cx);ln.setAttribute('y1',cy);ln.setAttribute('x2',ox(np));ln.setAttribute('y2',oy(np));
+        ln.setAttribute('class','road');svg.appendChild(ln);
+      }
+    });
+  });
+  // edges
+  edges.forEach(function(e){
+    var a=byKey[e.a_q+','+e.a_r],b=byKey[e.b_q+','+e.b_r];if(!a||!b)return;
+    var sc=sharedCorners(a,b,ox,oy);if(!sc)return;
+    var ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1',sc[0].x);ln.setAttribute('y1',sc[0].y);ln.setAttribute('x2',sc[1].x);ln.setAttribute('y2',sc[1].y);
+    ln.setAttribute('class','edge-'+e.type);svg.appendChild(ln);
+  });
+  // settlements
+  tiles.forEach(function(t){
+    if(!t.settlement||t.settlement==='none')return;
+    var p=hexPos(t.q,t.r);var cx=ox(p),cy=oy(p);
+    var sym=t.settlement==='city'?9:t.settlement==='town'?7:5;
+    var rect=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x',cx-sym);rect.setAttribute('y',cy-sym);rect.setAttribute('width',sym*2);rect.setAttribute('height',sym*2);
+    rect.setAttribute('rx',2);rect.setAttribute('fill','rgba(40,30,20,0.8)');rect.setAttribute('class','settle');svg.appendChild(rect);
+    var lbl=document.createElementNS('http://www.w3.org/2000/svg','text');
+    lbl.setAttribute('x',cx);lbl.setAttribute('y',cy+3);lbl.setAttribute('class','settle-label');
+    lbl.textContent=SETTLE_ABBR[t.settlement]||'';svg.appendChild(lbl);
+  });
+
+  // units (forces) — drawn last so they sit on top
+  forces.forEach(function(f){
+    var t=byKey[f.q+','+f.r]; if(!t) return;
+    var p=hexPos(f.q,f.r);var cx=ox(p),cy=oy(p);
+    var color=(f.players&&f.players.color_hex)||'#444';
+    // unit token: a rounded rect with a strength number
+    var g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('class','unit');
+    g.style.cursor='pointer';
+    var w=SIZE*0.95, h=SIZE*0.62;
+    var rect=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x',cx-w/2);rect.setAttribute('y',cy-h/2);
+    rect.setAttribute('width',w);rect.setAttribute('height',h);rect.setAttribute('rx',3);
+    rect.setAttribute('fill',color);rect.setAttribute('stroke','#fff');rect.setAttribute('stroke-width','1.5');
+    g.appendChild(rect);
+    // unit type initial (T=tank, etc.) on the left, strength on the right
+    var nm=(f.unit_types&&f.unit_types.name)||'?';
+    var ini=document.createElementNS('http://www.w3.org/2000/svg','text');
+    ini.setAttribute('x',cx-w/2+5);ini.setAttribute('y',cy+3);
+    ini.setAttribute('font-size','9');ini.setAttribute('font-weight','700');ini.setAttribute('fill','#fff');
+    ini.textContent=nm.charAt(0);
+    g.appendChild(ini);
+    var str=document.createElementNS('http://www.w3.org/2000/svg','text');
+    str.setAttribute('x',cx+w/2-5);str.setAttribute('y',cy+3);
+    str.setAttribute('text-anchor','end');str.setAttribute('font-size','9');str.setAttribute('font-weight','700');str.setAttribute('fill','#fff');
+    str.textContent=f.strength;
+    g.appendChild(str);
+    g.addEventListener('click',function(ev){ ev.stopPropagation();
+      // if this unit is mine, start planning a move; otherwise just show info
+      if(currentPlayer && f.owner_player_id===currentPlayer.id){
+        startPlanning(f);
+      } else {
+        showUnitInfo(f);
+      }
+    });
+    svg.appendChild(g);
+  });
+
+  // counts
+  var ct={},set={village:0,town:0,city:0},roads=0;
+  tiles.forEach(function(t){ct[t.terrain]=(ct[t.terrain]||0)+1;if(t.has_road)roads++;if(t.settlement&&t.settlement!=='none')set[t.settlement]++;});
+  document.getElementById('counts').innerHTML='<b>Map summary</b><br>'+tiles.length+' tiles · '+roads+' road · '+
+    set.city+' cities, '+set.town+' towns, '+set.village+' villages<br>'+edges.length+' edge features';
+}
+
+function showInfo(t){
+  document.getElementById('info').innerHTML='<b>Hex ('+t.q+', '+t.r+')</b><br>'+
+    'Terrain: '+((TERR[t.terrain]||{name:t.terrain}).name)+'<br>'+
+    'Settlement: '+(t.settlement==='none'?'—':t.settlement)+'<br>'+
+    'Road: '+(t.has_road?'yes':'no')+'<br>'+
+    'Status: '+t.status+'<br>'+
+    '<span class="muted">db id '+t.id+'</span>';
+}
+
+function showUnitInfo(f){
+  var nm=(f.unit_types&&f.unit_types.name)||'Unknown';
+  var owner=(f.players&&f.players.display_name)||('player '+f.owner_player_id);
+  document.getElementById('info').innerHTML='<b>'+nm+'</b><br>'+
+    'Owner: '+owner+'<br>'+
+    'Location: ('+f.q+', '+f.r+')<br>'+
+    'Strength: '+f.strength+'<br>'+
+    'Morale: '+f.morale+'<br>'+
+    'Ammo: '+(f.ammo<0?'∞':f.ammo)+'<br>'+
+    '<span class="muted">force id '+f.id+'</span>';
+}
+
+// ----- planning (movement) -----
+function startPlanning(f){
+  planUnit = f;
+  planType = f.unit_types || {};
+  planPath = [{q:f.q, r:f.r}];
+  document.getElementById('planCard').style.display='block';
+  document.getElementById('planUnit').innerHTML =
+    '<b>'+((planType.name)||'Unit')+'</b> at ('+f.q+','+f.r+') · movement '+(planType.movement!=null?planType.movement:'?');
+  renderPlan();
+  render();
+}
+function endPlanning(){
+  planUnit=null; planType=null; planPath=[];
+  document.getElementById('planCard').style.display='none';
+}
+function pathCost(){
+  // cost of entering each hex after the first
+  var c=0;
+  for(var i=1;i<planPath.length;i++){
+    var t=byKey[planPath[i].q+','+planPath[i].r];
+    c += t ? (TERR_MOVE[t.terrain]||1) : 1;
+  }
+  return c;
+}
+function isAdjacent(a,b){
+  return NEIGHBORS.some(function(o){ return a.q+o[0]===b.q && a.r+o[1]===b.r; });
+}
+function tryExtendPath(t){
+  var last = planPath[planPath.length-1];
+  // clicking the last hex again does nothing; clicking an earlier path hex trims back to it
+  for(var i=0;i<planPath.length;i++){
+    if(planPath[i].q===t.q && planPath[i].r===t.r){
+      planPath = planPath.slice(0, i+1);
+      renderPlan(); render(); return;
+    }
+  }
+  if(!isAdjacent(last, t)){ return; } // must be adjacent to path end
+  var dest = byKey[t.q+','+t.r];
+  if(!dest || (TERR_MOVE[dest.terrain]||1)>=99){ return; } // impassable (water)
+  var move = planType.movement!=null?planType.movement:0;
+  var newCost = pathCost() + (TERR_MOVE[dest.terrain]||1);
+  if(newCost > move){ return; } // not enough movement points
+  planPath.push({q:t.q, r:t.r});
+  renderPlan(); render();
+}
+function renderPlan(){
+  var move = planType && planType.movement!=null?planType.movement:0;
+  document.getElementById('mpLeft').textContent = (move - pathCost());
+  var el=document.getElementById('planPath');
+  if(planPath.length<=1){ el.textContent='No path yet — tap an adjacent hex.'; }
+  else {
+    el.innerHTML = planPath.map(function(p,i){
+      if(i===0) return 'Start ('+p.q+','+p.r+')';
+      var t=byKey[p.q+','+p.r];
+      return i+'. ('+p.q+','+p.r+') −'+(t?(TERR_MOVE[t.terrain]||1):1);
+    }).join('<br>');
+  }
+}
+async function saveOrder(){
+  if(!planUnit || planPath.length<2){ setStatus('Plot a path first (tap adjacent hexes).','bad'); return; }
+  var gid=+document.getElementById('gid').value||1;
+  var pathStr = planPath.map(function(p){ return p.q+':'+p.r; }).join(',');
+  setStatus('Saving move order…','info');
+  try{
+    // remove any existing draft move order for this force this turn, then insert
+    await supa.from('orders').delete()
+      .eq('game_id',gid).eq('player_id',currentPlayer.id)
+      .eq('force_id',planUnit.id).eq('status','draft');
+    var ins = await supa.from('orders').insert({
+      game_id: gid, player_id: currentPlayer.id, turn_number: 0,
+      force_id: planUnit.id, order_type: 'move', path: pathStr, status: 'draft'
+    }).select().single();
+    if(ins.error) throw ins.error;
+    setStatus('Move order saved for '+((planType.name)||'unit')+': '+pathStr,'ok');
+    endPlanning();
+    render();
+  }catch(e){
+    setStatus('Save failed: '+(e.message||e),'bad');
+  }
+}
+</script>
+</body>
+</html>
