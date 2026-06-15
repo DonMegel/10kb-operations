@@ -49,7 +49,7 @@
 </head>
 <body>
 <header>
-  <h1>10,000 Bones Operations <span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">v0.2.1</span></h1>
+  <h1>10,000 Bones Operations <span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">v0.2.2</span></h1>
   <span class="conn"><span class="dot" id="connDot"></span><span id="connText">not connected</span></span>
   <span class="conn" id="whoami" style="display:none"></span>
   <button class="sec" id="logoutBtn" style="display:none">Log out</button>
@@ -292,6 +292,13 @@ async function loadMap(){
   if(!supa){ setStatus('Not connected yet.','bad'); return; }
   var gid=+document.getElementById('gid').value||1;
   setStatus('Loading map for game '+gid+'…','info');
+  // diagnostic: is the DB actually seeing us as authenticated right now?
+  try{
+    var sChk = await supa.auth.getSession();
+    var tok = sChk.data && sChk.data.session && sChk.data.session.access_token;
+    console.log('Session at loadMap:', tok ? ('token present, length '+tok.length) : 'NO TOKEN — requests will be anonymous');
+    if(currentPlayer) console.log('currentPlayer id:', currentPlayer.id);
+  }catch(e){ console.log('session check error', e); }
   try{
     var tRes = await supa.from('tiles').select('*').eq('game_id', gid);
     if(tRes.error) throw tRes.error;
