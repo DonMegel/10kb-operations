@@ -48,7 +48,7 @@
 </head>
 <body>
 <header>
-  <h1>10,000 Bones Operations <span class="ver">v0.5.0</span></h1>
+  <h1>10,000 Bones Operations <span class="ver">v0.6.0</span></h1>
   <span class="conn"><span class="dot" id="connDot"></span><span id="connText">not connected</span></span>
   <span class="conn" id="whoami" style="display:none"></span>
   <button class="sec" id="logoutBtn" style="display:none">Log out</button>
@@ -501,8 +501,10 @@ async function commitOrders(){
     var up=await supa.from('players').update({ready:true}).eq('id',currentPlayer.id).select().single();
     if(up.error) throw up.error;
     currentPlayer.ready=true;
-    setStatus('Orders committed — you are ready. Waiting on other players.','ok');
-    await loadMap();
+    setStatus('Orders committed — you are ready.','ok');
+    // check if everyone is now ready -> resolve the turn
+    var resolved = await maybeResolveTurn(gid);
+    if(!resolved) await loadMap();
   }catch(e){ setStatus('Commit failed: '+(e.message||e),'bad'); }
 }
 async function uncommitOrders(){
@@ -517,6 +519,71 @@ async function uncommitOrders(){
     setStatus('Orders re-opened for editing.','info');
     await loadMap();
   }catch(e){ setStatus('Un-commit failed: '+(e.message||e),'bad'); }
+}
+
+// ---------- turn resolution (movement only, this pass) ----------
+async function maybeResolveTurn(gid){
+  // are all non-eliminated players ready?
+  var pRes = await supa.from('players').select('id, ready, is_eliminated').eq('game_id',gid);
+  if(pRes.error) return false;
+  var active = (pRes.data||[]).filter(function(p){ return !p.is_eliminated; });
+  if(active.length===0) return false;
+  var allReady = active.every(function(p){ return p.ready; });
+  if(!allReady) return false;
+
+  // claim the resolve by flipping game phase to 'resolving' (guard against double-run)
+  var gRes = await supa.from('games').select('id, phase, turn_number').eq('id',gid).single();
+  if(gRes.error) return false;
+  if(gRes.data.phase==='resolving') return false; // someone else is resolving
+  var claim = await supa.from('games').update({phase:'resolving'})
+    .eq('id',gid).eq('phase','planning').select();
+  // if no row came back, another client already claimed it
+  if(claim.error || !claim.data || claim.data.length===0){
+    // phase wasn't 'planning' — could be first turn (phase 'draft') ; allow that too
+    var claim2 = await supa.from('games').update({phase:'resolving'})
+      .eq('id',gid).neq('phase','resolving').select();
+    if(claim2.error || !claim2.data || claim2.data.length===0) return false;
+  }
+
+  setStatus('All players ready — resolving turn '+gRes.data.turn_number+'…','info');
+  await resolveTurn(gid, gRes.data.turn_number);
+  return true;
+}
+
+async function resolveTurn(gid, turnNumber){
+  try{
+    // 1. read all committed move orders for this turn (across all players)
+    var oRes = await supa.from('orders').select('*')
+      .eq('game_id',gid).eq('status','committed').eq('order_type','move');
+    var orders = (oRes.error?[]:(oRes.data||[]));
+
+    // 2. apply each move: unit goes to the LAST hex in its path
+    for(var i=0;i<orders.length;i++){
+      var o = orders[i];
+      if(!o.path) continue;
+      var steps = o.path.split(',');
+      var dest = steps[steps.length-1].split(':');
+      var dq = parseInt(dest[0],10), dr = parseInt(dest[1],10);
+      await supa.from('forces').update({ q:dq, r:dr }).eq('id', o.force_id);
+    }
+
+    // 3. mark all those orders resolved
+    await supa.from('orders').update({status:'resolved'})
+      .eq('game_id',gid).eq('status','committed');
+
+    // 4. reset ready flags, advance turn, back to planning phase
+    await supa.from('players').update({ready:false}).eq('game_id',gid);
+    var newTurn = turnNumber + 1;
+    await supa.from('games').update({ phase:'planning', turn_number:newTurn }).eq('id',gid);
+
+    setStatus('Turn '+turnNumber+' resolved. Now on turn '+newTurn+'.','ok');
+    if(currentPlayer) currentPlayer.ready=false;
+    await loadMap();
+  }catch(e){
+    setStatus('Resolution error: '+(e.message||e),'bad');
+    // try to release the resolving lock so the game isn't stuck
+    await supa.from('games').update({phase:'planning'}).eq('id',gid);
+  }
 }
 </script>
 </body>
