@@ -49,7 +49,7 @@
 </head>
 <body>
 <header>
-  <h1>10,000 Bones Operations <span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">v0.2.8</span></h1>
+  <h1>10,000 Bones Operations <span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">v0.3.0</span></h1>
   <span class="conn"><span class="dot" id="connDot"></span><span id="connText">not connected</span></span>
   <span class="conn" id="whoami" style="display:none"></span>
   <button class="sec" id="logoutBtn" style="display:none">Log out</button>
@@ -136,7 +136,7 @@ var planUnit = null;        // the selected force
 var planPath = [];          // array of {q,r} starting at the unit's hex
 var planType = null;        // the unit's type info (movement, etc.)
 
-var supa = null, tiles = [], edges = [], forces = [], myOrders = [], byKey = {}, selected = null;
+var supa = null, tiles = [], edges = [], forces = [], myOrders = [], orderedForceIds = {}, byKey = {}, selected = null;
 var currentUser = null, currentPlayer = null;
 
 function setStatus(msg, kind){
@@ -249,23 +249,9 @@ async function joinGame(){
   var name=document.getElementById('displayName').value.trim()||currentUser.email.split('@')[0];
   var color=document.getElementById('sideColor').value;
   authMsg('Joining game '+gid+'…');
-  // diagnostic: confirm the client has an authenticated session right now
-  var who = await supa.auth.getUser();
-  if(who.error || !who.data || !who.data.user){
-    authMsg('Not authenticated at insert time — the session was lost. Try logging in again. ('+(who.error?who.error.message:'no user')+')');
-    return;
-  }
-  var uid = who.data.user.id;
-  // confirm the access token exists — this is what authorizes the DB request
-  var sess = await supa.auth.getSession();
-  var hasToken = sess.data && sess.data.session && sess.data.session.access_token;
-  if(!hasToken){
-    authMsg('Logged in, but no access token is attached to requests — the database sees you as anonymous. This is common when running from a file:// path. Try serving the page over http (see notes), or log out and back in.');
-    return;
-  }
   try{
     var ins = await supa.from('players').insert({
-      game_id: gid, user_id: uid, display_name: name, color_hex: color, turn_order: 1, points_budget: 100
+      game_id: gid, user_id: currentUser.id, display_name: name, color_hex: color, turn_order: 1, points_budget: 100
     }).select().single();
     if(ins.error) throw ins.error;
     currentPlayer = ins.data;
@@ -274,7 +260,7 @@ async function joinGame(){
     setStatus('Joined as '+name+'. Loading map…','info');
     await loadMap();
   }catch(e){
-    authMsg('Join failed: '+(e.message||e)+'  [your uid: '+uid+']');
+    authMsg('Join failed: '+(e.message||e));
   }
 }
 
@@ -289,17 +275,9 @@ async function logout(){
 }
 
 async function loadMap(){
-  console.log('=== loadMap called ===', 'currentPlayer:', currentPlayer ? currentPlayer.id : 'NULL');
   if(!supa){ setStatus('Not connected yet.','bad'); return; }
   var gid=+document.getElementById('gid').value||1;
   setStatus('Loading map for game '+gid+'…','info');
-  // diagnostic: is the DB actually seeing us as authenticated right now?
-  try{
-    var sChk = await supa.auth.getSession();
-    var tok = sChk.data && sChk.data.session && sChk.data.session.access_token;
-    console.log('Session at loadMap:', tok ? ('token present, length '+tok.length) : 'NO TOKEN — requests will be anonymous');
-    if(currentPlayer) console.log('currentPlayer id:', currentPlayer.id);
-  }catch(e){ console.log('session check error', e); }
   try{
     var tRes = await supa.from('tiles').select('*').eq('game_id', gid);
     if(tRes.error) throw tRes.error;
@@ -311,31 +289,19 @@ async function loadMap(){
       .eq('game_id', gid);
     // forces may be empty or blocked by RLS — that's fine, just show none
     forces = (fRes.error ? [] : (fRes.data || []));
-    if(fRes.error) console.log('FORCES read error:', fRes.error);
-    console.log('forces loaded:', forces.length, '— now reading orders…');
 
-    // ----- orders read, fully isolated so nothing can break the load -----
+    // load this player's draft orders so ordered units can be marked
     myOrders = [];
     if(currentPlayer){
       try{
-        var g2 = +document.getElementById('gid').value||1;
         var oRes = await supa.from('orders').select('*')
-          .eq('game_id', g2).eq('player_id', currentPlayer.id).eq('status','draft');
-        if(oRes.error){
-          console.log('orders read returned error:', oRes.error);
-        } else {
-          myOrders = oRes.data || [];
-        }
-        console.log('ORDERS RESULT:', myOrders.length, 'orders for player', currentPlayer.id);
-      }catch(err){
-        console.log('orders read threw (caught):', err);
-        myOrders = [];
-      }
+          .eq('game_id', gid).eq('player_id', currentPlayer.id).eq('status','draft');
+        if(!oRes.error) myOrders = oRes.data || [];
+      }catch(err){ myOrders = []; }
     }
-    // build a quick lookup set of force ids that have orders, as numbers
-    window.orderedForceIds = {};
-    myOrders.forEach(function(o){ window.orderedForceIds[Number(o.force_id)] = true; });
-    console.log('orderedForceIds:', window.orderedForceIds);
+    // lookup set of force ids that have orders (as numbers, for reliable matching)
+    orderedForceIds = {};
+    myOrders.forEach(function(o){ orderedForceIds[Number(o.force_id)] = true; });
     tiles = tRes.data || [];
     edges = eRes.data || [];
     if(tiles.length===0){
@@ -346,7 +312,7 @@ async function loadMap(){
     byKey={}; tiles.forEach(function(t){ byKey[t.q+','+t.r]=t; });
     document.getElementById('mainArea').style.display='flex';
     render();
-    setStatus('Map loaded: '+tiles.length+' tiles, '+edges.length+' edges, '+forces.length+' units, '+myOrders.length+' of your orders.','ok');
+    setStatus('Map loaded: '+tiles.length+' tiles, '+forces.length+' units, '+myOrders.length+' orders placed.','ok');
   }catch(e){
     setStatus('Load failed: '+(e.message||e)+'. (If this mentions permission/RLS, check that you are a player in this game, or that the read policy allows it.)','bad');
   }
@@ -483,7 +449,7 @@ function render(){
     str.textContent=f.strength;
     g.appendChild(str);
     // ORDER CHECKMARK — draw a green badge if this unit has a draft order
-    if(window.orderedForceIds && window.orderedForceIds[Number(f.id)]===true){
+    if(orderedForceIds[Number(f.id)]===true){
       var bc=document.createElementNS('http://www.w3.org/2000/svg','circle');
       bc.setAttribute('cx',cx+w/2);bc.setAttribute('cy',cy-h/2);
       bc.setAttribute('r',7);bc.setAttribute('fill','#1aa34a');
