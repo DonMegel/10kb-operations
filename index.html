@@ -49,7 +49,7 @@
 </head>
 <body>
 <header>
-  <h1>10,000 Bones Operations <span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">v0.2.7</span></h1>
+  <h1>10,000 Bones Operations <span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">v0.2.8</span></h1>
   <span class="conn"><span class="dot" id="connDot"></span><span id="connText">not connected</span></span>
   <span class="conn" id="whoami" style="display:none"></span>
   <button class="sec" id="logoutBtn" style="display:none">Log out</button>
@@ -482,6 +482,20 @@ function render(){
     str.setAttribute('text-anchor','end');str.setAttribute('font-size','9');str.setAttribute('font-weight','700');str.setAttribute('fill','#fff');
     str.textContent=f.strength;
     g.appendChild(str);
+    // ORDER CHECKMARK — draw a green badge if this unit has a draft order
+    if(window.orderedForceIds && window.orderedForceIds[Number(f.id)]===true){
+      var bc=document.createElementNS('http://www.w3.org/2000/svg','circle');
+      bc.setAttribute('cx',cx+w/2);bc.setAttribute('cy',cy-h/2);
+      bc.setAttribute('r',7);bc.setAttribute('fill','#1aa34a');
+      bc.setAttribute('stroke','#fff');bc.setAttribute('stroke-width','1.5');
+      g.appendChild(bc);
+      var ck=document.createElementNS('http://www.w3.org/2000/svg','text');
+      ck.setAttribute('x',cx+w/2);ck.setAttribute('y',cy-h/2+3.5);
+      ck.setAttribute('text-anchor','middle');ck.setAttribute('font-size','10');
+      ck.setAttribute('font-weight','700');ck.setAttribute('fill','#fff');
+      ck.textContent='✓';
+      g.appendChild(ck);
+    }
     g.addEventListener('click',function(ev){ ev.stopPropagation();
       // if this unit is mine, start planning a move; otherwise just show info
       if(currentPlayer && f.owner_player_id===currentPlayer.id){
