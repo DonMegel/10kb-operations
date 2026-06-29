@@ -48,7 +48,7 @@
 </head>
 <body>
 <header>
-  <h1>10,000 Bones Operations <span class="ver">v0.6.1</span></h1>
+  <h1>10,000 Bones Operations <span class="ver">v0.6.2</span></h1>
   <span class="conn"><span class="dot" id="connDot"></span><span id="connText">not connected</span></span>
   <span class="conn" id="whoami" style="display:none"></span>
   <button class="sec" id="logoutBtn" style="display:none">Log out</button>
@@ -305,21 +305,27 @@ function render(){
   svg.setAttribute('viewBox','0 0 '+W+' '+H); svg.setAttribute('width',W); svg.setAttribute('height',H);
   function ox(p){return p.x-minX+pad;} function oy(p){return p.y-minY+pad;}
 
-  // saved-order routes (faint) when not actively planning
-  if(!planUnit){
-    myOrders.forEach(function(o){
-      if(!o.path) return;
-      o.path.split(',').forEach(function(step,idx){
-        if(idx===0) return;
-        var qr=step.split(':'); var t=byKey[qr[0]+','+qr[1]]; if(!t) return;
-        var p=hexPos(t.q,t.r), cx=ox(p), cy=oy(p), pts=[];
-        for(var i=0;i<6;i++){ var cn=corner(cx,cy,i); pts.push(cn.x.toFixed(1)+','+cn.y.toFixed(1)); }
-        var sh=document.createElementNS('http://www.w3.org/2000/svg','polygon');
-        sh.setAttribute('points',pts.join(' ')); sh.setAttribute('fill','rgba(255,200,0,0.22)'); sh.setAttribute('pointer-events','none');
-        svg.appendChild(sh);
-      });
-    });
+  // helper: draw a route as a dashed line with a start dot and an arrowhead
+  function drawRoute(coords, color){
+    if(coords.length<2) return;
+    var poly=document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    poly.setAttribute('points', coords.map(function(c){return c.x.toFixed(1)+','+c.y.toFixed(1);}).join(' '));
+    poly.setAttribute('fill','none'); poly.setAttribute('stroke',color); poly.setAttribute('stroke-width','3');
+    poly.setAttribute('stroke-linejoin','round'); poly.setAttribute('stroke-linecap','round');
+    poly.setAttribute('stroke-dasharray','6 4'); poly.setAttribute('pointer-events','none');
+    svg.appendChild(poly);
+    var s=coords[0];
+    var sd=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    sd.setAttribute('cx',s.x);sd.setAttribute('cy',s.y);sd.setAttribute('r',3.5);
+    sd.setAttribute('fill',color);sd.setAttribute('pointer-events','none');svg.appendChild(sd);
+    var a=coords[coords.length-2], b=coords[coords.length-1], ang=Math.atan2(b.y-a.y,b.x-a.x), ah=9;
+    var arr=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    arr.setAttribute('points', b.x.toFixed(1)+','+b.y.toFixed(1)+' '+
+      (b.x-ah*Math.cos(ang-Math.PI/6)).toFixed(1)+','+(b.y-ah*Math.sin(ang-Math.PI/6)).toFixed(1)+' '+
+      (b.x-ah*Math.cos(ang+Math.PI/6)).toFixed(1)+','+(b.y-ah*Math.sin(ang+Math.PI/6)).toFixed(1));
+    arr.setAttribute('fill',color);arr.setAttribute('pointer-events','none');svg.appendChild(arr);
   }
+  function pathToCoords(p){ var t=byKey[p.q+','+p.r]; if(!t) return null; var pos=hexPos(t.q,t.r); return {x:ox(pos),y:oy(pos)}; }
 
   // hexes
   tiles.forEach(function(t){
@@ -382,6 +388,17 @@ function render(){
     lbl.setAttribute('x',cx);lbl.setAttribute('y',cy+3);lbl.setAttribute('class','settle-label');
     lbl.textContent=SETTLE_ABBR[t.settlement]||''; svg.appendChild(lbl);
   });
+
+  // ordered routes — drawn on top of terrain so they're clearly visible
+  if(planUnit){
+    drawRoute(planPath.map(pathToCoords).filter(Boolean), 'rgba(214,158,0,0.95)');
+  } else {
+    myOrders.forEach(function(o){
+      if(!o.path) return;
+      var coords=o.path.split(',').map(function(step){ var qr=step.split(':'); return pathToCoords({q:+qr[0],r:+qr[1]}); }).filter(Boolean);
+      drawRoute(coords, 'rgba(214,158,0,0.9)');
+    });
+  }
 
   // units
   forces.forEach(function(f){
