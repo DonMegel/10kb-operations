@@ -48,7 +48,7 @@
 </head>
 <body>
 <header>
-  <h1>10,000 Bones Operations <span class="ver">v0.6.2</span></h1>
+  <h1>10,000 Bones Operations <span class="ver">v0.7.0</span></h1>
   <span class="conn"><span class="dot" id="connDot"></span><span id="connText">not connected</span></span>
   <span class="conn" id="whoami" style="display:none"></span>
   <button class="sec" id="logoutBtn" style="display:none">Log out</button>
@@ -85,6 +85,14 @@
 <div class="main" id="mainArea" style="display:none">
   <div id="board"><svg id="grid"></svg></div>
   <div class="sidebar">
+    <div class="card" id="draftPanel" style="display:none">
+      <b>Draft — buy your army</b>
+      <div id="budgetLine" style="margin:8px 0;font-size:12.5px"></div>
+      <div id="catalogList" style="margin:8px 0"></div>
+      <div id="cartLine" style="font-size:12.5px;color:#5f5e5a;margin:6px 0"></div>
+      <button id="confirmBuy" style="width:100%;margin-top:4px">Confirm purchases</button>
+      <div id="buyMsg" class="muted" style="margin-top:8px"></div>
+    </div>
     <div class="card" id="info"><b>Click a hex or unit</b><br>Details show here.</div>
     <div class="card" id="planCard" style="display:none">
       <b>Movement order</b>
@@ -128,6 +136,7 @@ var NEIGHBORS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
 var supa=null, tiles=[], edges=[], forces=[], myOrders=[], orderedForceIds={}, allPlayers=[], byKey={}, selected=null;
 var currentUser=null, currentPlayer=null;
 var planUnit=null, planType=null, planPath=[];
+var catalog=[], cart={}, gamePhase=null;  // draft shopping: cart is held client-side per design §8
 
 // ---------- helpers ----------
 function getSupabaseLib(){
@@ -169,6 +178,11 @@ document.getElementById('cancelPlan').addEventListener('click', function(){ endP
 document.getElementById('saveOrder').addEventListener('click', saveOrder);
 document.getElementById('commitBtn').addEventListener('click', commitOrders);
 document.getElementById('uncommitBtn').addEventListener('click', uncommitOrders);
+document.getElementById('catalogList').addEventListener('click', function(e){
+  var btn=e.target.closest('.shopbtn'); if(!btn) return;
+  changeCart(btn.getAttribute('data-id'), btn.getAttribute('data-act'));
+});
+document.getElementById('confirmBuy').addEventListener('click', confirmPurchases);
 
 // ---------- connection & auth ----------
 async function connect(){
@@ -281,6 +295,13 @@ async function loadMap(){
       if(me) currentPlayer.ready = me.ready;
     }
 
+    // game phase (drives draft vs. play view) and the unit catalog for shopping
+    var gRes = await supa.from('games').select('phase, turn_number').eq('id',gid).maybeSingle();
+    gamePhase = (gRes.data && gRes.data.phase) || null;
+    // catalog is queried without a game filter (assumes a global unit_types table)
+    var cRes = await supa.from('unit_types').select('*');
+    catalog = (cRes.error?[]:(cRes.data||[])).slice().sort(function(a,b){ return unitCost(a)-unitCost(b); });
+
     if(tiles.length===0){
       setStatus('Connected, but no tiles for game '+gid+'. Check the Game ID.','bad');
       document.getElementById('mainArea').style.display='none';
@@ -288,7 +309,7 @@ async function loadMap(){
     }
     byKey={}; tiles.forEach(function(t){ byKey[t.q+','+t.r]=t; });
     document.getElementById('mainArea').style.display='flex';
-    render(); renderReadyPanel();
+    render(); renderReadyPanel(); updateDraftView();
     setStatus('Map loaded: '+tiles.length+' tiles, '+forces.length+' units, '+myOrders.length+' orders placed.','ok');
   }catch(e){
     setStatus('Load failed: '+(e.message||e),'bad');
@@ -503,6 +524,59 @@ async function saveOrder(){
     setStatus('Move order saved: '+pathStr,'ok');
     endPlanning(); await loadMap();
   }catch(e){ setStatus('Save failed: '+(e.message||e),'bad'); }
+}
+
+// ---------- draft: shopping step (cart held client-side per design §8) ----------
+function unitCost(u){ return (u && u.build_cost!=null) ? u.build_cost : (u && u.cost!=null ? u.cost : 0); }
+function cartCount(){ return Object.keys(cart).reduce(function(s,id){ return s+cart[id]; }, 0); }
+function cartTotal(){
+  return Object.keys(cart).reduce(function(s,id){
+    var u=catalog.find(function(x){ return String(x.id)===String(id); });
+    return s + (u ? unitCost(u)*cart[id] : 0);
+  }, 0);
+}
+function updateDraftView(){
+  var isDraft = gamePhase==='draft';
+  document.getElementById('draftPanel').style.display = isDraft ? '' : 'none';
+  // hide play-only controls during the draft
+  document.getElementById('readyCard').style.display = isDraft ? 'none' : '';
+  if(isDraft){ endPlanning(); renderShop(); }
+}
+function renderShop(){
+  var budget = (currentPlayer && currentPlayer.points_budget) || 0;
+  var spent = cartTotal();
+  document.getElementById('budgetLine').innerHTML =
+    'Budget <b>'+budget+'</b> · Spent <b>'+spent+'</b> · Remaining <b>'+(budget-spent)+'</b>';
+  var rows = catalog.map(function(u){
+    var qty = cart[u.id]||0, cost = unitCost(u);
+    var stats = 'A'+u.attack+'/D'+u.defense+' · move '+u.movement+' · rng '+u.attack_range;
+    return '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid #e2e0d8">'+
+      '<div style="flex:1"><b>'+u.name+'</b> <span class="muted">('+cost+' pts)</span><br>'+
+      '<span class="muted" style="font-size:11px">'+stats+'</span></div>'+
+      '<button class="sec shopbtn" data-act="minus" data-id="'+u.id+'" style="padding:4px 10px">−</button>'+
+      '<span style="min-width:18px;text-align:center">'+qty+'</span>'+
+      '<button class="sec shopbtn" data-act="plus" data-id="'+u.id+'" style="padding:4px 10px">+</button></div>';
+  }).join('');
+  document.getElementById('catalogList').innerHTML = rows || '<span class="muted">No units in catalog (check the unit_types table).</span>';
+  var n = cartCount();
+  document.getElementById('cartLine').textContent = n+' unit'+(n===1?'':'s')+' in cart · '+spent+' pts.';
+  document.getElementById('confirmBuy').disabled = (n===0 || spent>budget);
+}
+function changeCart(id, act){
+  var u = catalog.find(function(x){ return String(x.id)===String(id); }); if(!u) return;
+  var budget = (currentPlayer && currentPlayer.points_budget) || 0;
+  if(act==='plus'){
+    if(cartTotal()+unitCost(u) > budget){ document.getElementById('buyMsg').textContent='Not enough points for another '+u.name+'.'; return; }
+    cart[u.id] = (cart[u.id]||0)+1; document.getElementById('buyMsg').textContent='';
+  } else {
+    cart[u.id] = Math.max(0,(cart[u.id]||0)-1); if(!cart[u.id]) delete cart[u.id];
+  }
+  renderShop();
+}
+function confirmPurchases(){
+  if(cartCount()===0) return;
+  document.getElementById('buyMsg').innerHTML = '✓ Purchases confirmed: '+cartCount()+' units, '+cartTotal()+
+    ' pts. Deployment step is next — your cart is held in this page until you place the units.';
 }
 
 // ---------- commit / ready ----------
